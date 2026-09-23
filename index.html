@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="description" content="A live poll with two multiple-choice questions and animated results.">
+  <title>Live Poll</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1f2630;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #7c5cff;
+      --accent-2: #22d3ee;
+      --success: #3fb950;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100vh;
+      background: radial-gradient(1200px 600px at 50% -200px, #1b1640 0%, var(--bg) 60%) fixed, var(--bg);
+      color: var(--text);
+      font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+    }
+    main { max-width: 640px; margin: 0 auto; }
+    header { text-align: center; margin: 24px 0 28px; }
+    h1 { font-size: clamp(1.8rem, 6vw, 2.4rem); margin: 0 0 6px; letter-spacing: -0.02em; }
+    header p { margin: 0; color: var(--muted); }
+    .live {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--success); margin-bottom: 12px;
+    }
+    .live::before {
+      content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--success);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: 0.3; transform: scale(0.7); } }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px 18px;
+      margin-bottom: 20px;
+    }
+    .card h2 { font-size: 1.25rem; margin: 0 0 4px; line-height: 1.3; }
+    .qnum { color: var(--accent-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+
+    .options { display: grid; gap: 12px; margin-top: 16px; }
+    .option {
+      display: block; width: 100%; min-height: 60px;
+      padding: 16px 20px;
+      font: inherit; font-size: 1.1rem; font-weight: 600; text-align: left;
+      color: var(--text); background: var(--surface-2);
+      border: 2px solid var(--border); border-radius: 14px;
+      cursor: pointer; touch-action: manipulation;
+      transition: border-color .15s, background .15s, transform .1s;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option:active { transform: scale(0.98); }
+    .option:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+
+    .results { display: grid; gap: 14px; margin-top: 16px; }
+    .row-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-weight: 600; }
+    .row-label .pct { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .row.mine .row-label span:first-child::after { content: " ✓ your vote"; color: var(--accent-2); font-size: 0.8rem; font-weight: 500; }
+    .track { height: 22px; background: var(--surface-2); border-radius: 11px; overflow: hidden; }
+    .bar {
+      height: 100%; width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      border-radius: 11px;
+      transition: width .9s cubic-bezier(.22, 1, .36, 1);
+    }
+    .row:not(.mine) .bar { background: linear-gradient(90deg, #4b4f7a, #5a6b85); }
+    .total { margin: 14px 0 0; color: var(--muted); font-size: 0.9rem; }
+
+    .actions { text-align: center; margin-top: 8px; }
+    .reset {
+      min-height: 48px; padding: 12px 22px;
+      font: inherit; font-weight: 600; color: var(--muted);
+      background: transparent; border: 1px solid var(--border); border-radius: 12px; cursor: pointer;
+    }
+    .reset:hover { color: var(--text); border-color: var(--muted); }
+    footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 24px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bar, .option { transition: none; }
+      .live::before { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="live">Live</div>
+      <h1>Quick Poll</h1>
+      <p>Tap an answer to vote and see the results.</p>
+    </header>
+    <div id="poll"></div>
+    <div class="actions">
+      <button class="reset" id="reset" type="button">Reset all votes</button>
+    </div>
+    <footer>Votes are stored in this browser (localStorage) and update live across open tabs.</footer>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var QUESTIONS = [
+        {
+          id: "q1",
+          text: "Which programming language do you enjoy most?",
+          options: ["JavaScript", "Python", "Rust", "Go"]
+        },
+        {
+          id: "q2",
+          text: "When do you do your best work?",
+          options: ["Early morning", "Afternoon", "Evening", "Late night"]
+        }
+      ];
+
+      var STORE_KEY = "livePoll:v1";
+      var root = document.getElementById("poll");
+
+      function emptyState() {
+        var s = { votes: {}, mine: {} };
+        QUESTIONS.forEach(function (q) {
+          s.votes[q.id] = q.options.map(function () { return 0; });
+        });
+        return s;
+      }
+
+      function load() {
+        var s = emptyState();
+        try {
+          var saved = JSON.parse(localStorage.getItem(STORE_KEY));
+          if (saved && saved.votes) {
+            QUESTIONS.forEach(function (q) {
+              var v = saved.votes[q.id];
+              if (Array.isArray(v) && v.length === q.options.length) {
+                s.votes[q.id] = v.map(function (n) { return Math.max(0, n | 0); });
+              }
+              var m = saved.mine && saved.mine[q.id];
+              if (Number.isInteger(m) && m >= 0 && m < q.options.length) s.mine[q.id] = m;
+            });
+          }
+        } catch (e) { /* storage unavailable or corrupt: start fresh */ }
+        return s;
+      }
+
+      function save(s) {
+        try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
+      }
+
+      var state = load();
+
+      function el(tag, cls, text) {
+        var n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text != null) n.textContent = text;
+        return n;
+      }
+
+      function render() {
+        root.textContent = "";
+        QUESTIONS.forEach(function (q, qi) {
+          var card = el("section", "card");
+          card.setAttribute("aria-labelledby", q.id + "-title");
+          card.appendChild(el("div", "qnum", "Question " + (qi + 1) + " of " + QUESTIONS.length));
+          var h = el("h2", null, q.text);
+          h.id = q.id + "-title";
+          card.appendChild(h);
+
+          if (state.mine[q.id] === undefined) {
+            var opts = el("div", "options");
+            q.options.forEach(function (label, oi) {
+              var b = el("button", "option", label);
+              b.type = "button";
+              b.addEventListener("click", function () { vote(q.id, oi); });
+              opts.appendChild(b);
+            });
+            card.appendChild(opts);
+          } else {
+            card.appendChild(renderResults(q));
+          }
+          root.appendChild(card);
+        });
+
+        // Animate bars from 0 to their target width on the next frame.
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            root.querySelectorAll(".bar").forEach(function (b) { b.style.width = b.dataset.w + "%"; });
+          });
+        });
+      }
+
+      function renderResults(q) {
+        var wrap = el("div");
+        var votes = state.votes[q.id];
+        var total = votes.reduce(function (a, b) { return a + b; }, 0);
+        var list = el("div", "results");
+        list.setAttribute("role", "list");
+        q.options.forEach(function (label, oi) {
+          var pct = total ? Math.round((votes[oi] / total) * 100) : 0;
+          var row = el("div", "row" + (state.mine[q.id] === oi ? " mine" : ""));
+          row.setAttribute("role", "listitem");
+          var lab = el("div", "row-label");
+          lab.appendChild(el("span", null, label));
+          lab.appendChild(el("span", "pct", pct + "% · " + votes[oi]));
+          var track = el("div", "track");
+          track.setAttribute("role", "progressbar");
+          track.setAttribute("aria-label", label);
+          track.setAttribute("aria-valuemin", "0");
+          track.setAttribute("aria-valuemax", "100");
+          track.setAttribute("aria-valuenow", String(pct));
+          var bar = el("div", "bar");
+          bar.dataset.w = pct;
+          track.appendChild(bar);
+          row.appendChild(lab);
+          row.appendChild(track);
+          list.appendChild(row);
+        });
+        wrap.appendChild(list);
+        wrap.appendChild(el("p", "total", total + (total === 1 ? " vote" : " votes")));
+        return wrap;
+      }
+
+      function vote(qid, oi) {
+        if (state.mine[qid] !== undefined) return;
+        state.votes[qid][oi] += 1;
+        state.mine[qid] = oi;
+        save(state);
+        render();
+      }
+
+      document.getElementById("reset").addEventListener("click", function () {
+        if (!confirm("Reset all votes stored in this browser?")) return;
+        state = emptyState();
+        save(state);
+        render();
+      });
+
+      // Live updates: re-render when another tab changes the stored votes.
+      window.addEventListener("storage", function (e) {
+        if (e.key === STORE_KEY) { state = load(); render(); }
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>
